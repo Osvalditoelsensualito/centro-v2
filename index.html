@@ -1,3 +1,18 @@
+No se seleccionó ningún elemento
+
+Ir al contenido
+Cómo usar Gmail con lectores de pantalla
+1 de 4,874
+Kkk
+Recibidos
+
+Osvaldo González Fernández <osvaldogonzalezfernandez71@gmail.com>
+Archivos adjuntos
+11:25 p.m. (hace 2 minutos)
+para mí
+
+ Un archivo adjunto
+  •  Analizado por Gmail
 <!doctype html>
 <html lang="es">
 <head>
@@ -1070,7 +1085,11 @@ async function home(){
   const heroCaloriesCard=showCalories?`<article class="card metric-card" data-dblnav="calories"><div class="card-title">🔥 Calorías</div><div class="center-ring">${ring(calPct,'kcal',`${c.consumed}`,`de ${c.goal}`,'cal')}</div><div class="metric-status ${c.consumed>c.goal?'bad':'good'}">${c.consumed>c.goal?'Meta excedida':`${Math.max(0,c.goal-c.consumed)} kcal restantes`}</div></article>`:'';
   const activityCard=showCalories?`<article class="card stat-card activity-home-card" data-nav="calories" data-dblnav="calories"><div class="card-title">🏃 Actividad</div><div class="big-stat">${activityBurn>0?num(activityBurn):'—'}</div><div class="muted">${activityBurn>0?'kcal gastadas':'sin registrar'}</div><div class="activity-mini"><span>🏃 ${run.ran?`${num(run.km)} km`:'—'}</span><span>🚶 ${run.steps?num(run.steps):'—'} pasos</span></div></article>`:'';
   const tradingCard=showTrading?`<article class="card stat-card" data-nav="trading" data-dblnav="trading"><div class="card-title">Trading</div><div class="big-stat ${tr.amount>0?'gain':tr.amount<0?'loss':''}">${tr.result==='none'?'—':`${tr.amount>=0?'+':''}${money(tr.amount,'USD')}`}</div><div class="muted">${tr.result==='none'?'sin registrar':tr.result==='gain'?'ganadora':tr.result==='loss'?'perdedora':tr.result==='mixed'?'mixto':'breakeven'}</div></article>`:'';
-  const gridCards=[activityCard,tradingCard].filter(Boolean).join('');
+  const gridCardsList=[activityCard,tradingCard].filter(Boolean);
+  const gridCards=gridCardsList.join('');
+  const gridStyle=gridCardsList.length===1?' style="grid-template-columns:1fr"':'';
+  const heroCount=1+(showCalories?1:0);
+  const heroStyle=heroCount===1?' style="grid-template-columns:1fr"':'';
   const habitsCard=showHabits?`<article class="card" data-dblnav="habits"><div class="card-title">Pendientes de hábitos</div>${renderChecklistPreview(allH.filter(x=>!x.completed), 'habits','No quedan hábitos pendientes 🎉',s.habitCompletionAnimation||'circle')}</article>`:'';
   const tasksCard=showTasks?`<article class="card" data-dblnav="tasks"><div class="card-title">Tareas de hoy</div>${renderChecklistPreview(tasks.filter(x=>!x.completed),'tasks','No quedan tareas pendientes 🎉')}</article>`:'';
   const marketRows=[showNews?`<button class="quick-row" data-nav="news"><span>📰 Noticias USD</span><span>→</span></button>`:'',showNews?`<button class="quick-row" data-nav="news"><span>🗞️ New York Times ${nyt.read?'✓':''}</span><span>→</span></button>`:'',showTrading?`<button class="quick-row" data-nav="trading"><span>📈 Preparar trading · 18:00</span><span>→</span></button>`:''].filter(Boolean).join('');
@@ -1078,11 +1097,11 @@ async function home(){
   const financeCard=showFinance?`<article class="card"><div class="card-title">Finanzas del mes</div><div class="money-row"><span>Ganancia</span><strong>${money(fin.income+(fin.incomes||[]).reduce((a,e)=>a+e.amount,0),s.currency||'UYU')}</strong></div><div class="money-row"><span>Gastos</span><strong class="loss">-${money(fin.expenses.reduce((a,e)=>a+e.amount,0),s.currency||'UYU')}</strong></div><div class="money-row total"><span>Disponible</span><strong>${money(fin.income+(fin.incomes||[]).reduce((a,e)=>a+e.amount,0)-fin.expenses.reduce((a,e)=>a+e.amount,0),s.currency||'UYU')}</strong></div></article>`:'';
   return `<main class="screen">
     ${section('Resumen de hoy',`<span class="pill">${Math.round(Math.min(100,completed))}%</span>`)}
-    <div class="hero-grid">
+    <div class="hero-grid"${heroStyle}>
       <article class="card metric-card water"><div class="card-title">💧 Agua</div><div class="metric-line"><div><strong>${w.glasses}</strong><span> / ${w.goalGlasses} vasos</span><small>${w.glasses*w.glassSizeMl} / ${w.goalGlasses*w.glassSizeMl} ml</small></div><button class="round-btn" data-action="water-plus">＋</button></div><div class="bar-track"><div class="bar-fill cyan" style="width:${Math.min(100,waterPct)}%"></div></div></article>
       ${heroCaloriesCard}
     </div>
-    ${gridCards?`<div class="grid-2">${gridCards}</div>`:''}
+    ${gridCards?`<div class="grid-2"${gridStyle}>${gridCards}</div>`:''}
     ${habitsCard}
     ${tasksCard}
     ${marketCard}
@@ -1890,3 +1909,5 @@ if ('serviceWorker' in navigator) {
 </script>
 </body>
 </html>
+Centro-4-3-1-8-2-4.html
+Mostrando Centro-4-3-1-8-2-4.html
