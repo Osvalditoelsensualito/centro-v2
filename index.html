@@ -2795,7 +2795,7 @@ const GEMINI_API_KEY_STORAGE='user_gemini_api_key';
 // Current stable multimodal model: Gemini 3.7 Flash supports image input and structured JSON output.
 const GEMINI_MODEL='gemini-3.7-flash';
 const GEMINI_MODEL_URL='https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL;
-const GEMINI_INTERACTIONS_URL='https://generativelanguage.googleapis.com/v1/interactions';
+const GEMINI_GENERATE_URL='https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL+':generateContent';
 const GEMINI_IMAGE_MAX_BYTES=12*1024*1024;
 const GEMINI_IMAGE_MAX_EDGE=1280;
 const GEMINI_FETCH_TIMEOUT_MS=60000;
@@ -2809,8 +2809,7 @@ const GEMINI_FOOD_SCHEMA={
     carbohidratos_g:{type:'number'},
     grasas_g:{type:'number'}
   },
-  required:['calorias','proteinas_g','carbohidratos_g','grasas_g'],
-  additionalProperties:false
+  required:['calorias','proteinas_g','carbohidratos_g','grasas_g']
 };
 let geminiModelVerified=false;
 
@@ -2892,46 +2891,29 @@ async function verifyGeminiModel(apiKey){
   if(!response.ok){const msg=typeof payload?.error?.message==='string'?payload.error.message:'HTTP '+response.status;geminiDebug('ERROR verificación modelo',{status:response.status,message:msg});if(response.status===401||response.status===403)throw geminiError('invalid-key',msg);if(response.status===404)throw geminiError('model-unavailable',msg);if(response.status===429)throw geminiError('quota',msg);if(response.status>=500)throw geminiError('service',msg);throw geminiError('model-check-failed',msg);}
   geminiModelVerified=true;return true;
 }
-function extractGeminiInteractionText(payload){
-  if(typeof payload?.output_text==='string'&&payload.output_text.trim())return payload.output_text.trim();
-  const steps=Array.isArray(payload?.steps)?payload.steps:[];
-  for(let i=steps.length-1;i>=0;i--){const step=steps[i];if(step?.type!=='model_output')continue;const blocks=Array.isArray(step.content)?step.content:[];const txt=blocks.filter(b=>b?.type==='text'&&typeof b.text==='string').map(b=>b.text).join('').trim();if(txt)return txt;}
-  return '';
+function extractGeminiResponseText(payload){
+  const candidate=Array.isArray(payload?.candidates)?payload.candidates[0]:null;
+  const parts=Array.isArray(candidate?.content?.parts)?candidate.content.parts:[];
+  return parts.filter(p=>typeof p?.text==='string').map(p=>p.text).join('').trim();
 }
 async function geminiInteraction(input,responseSchema,logLabel='Gemini'){
   const apiKey=getGeminiApiKey();if(!apiKey)throw geminiError('missing-key');
-  const body={model:GEMINI_MODEL,input,response_format:{type:'text',mime_type:'application/json',schema:responseSchema}};
-  geminiDebug('5. Endpoint preparado',{endpoint:'Gemini Interactions API',model:GEMINI_MODEL});
-  geminiDebug('5. Request preparado',{multimodal:Array.isArray(input)&&input.some(x=>x?.type==='image'),structuredOutput:true});
-  let result;try{geminiDebug('5. Iniciando fetch');result=await geminiFetchJson(GEMINI_INTERACTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,Accept:'application/json'},body:JSON.stringify(body)},'fetch',GEMINI_FETCH_TIMEOUT_MS);geminiDebug('6. Fetch completado',{elapsedMs:result.elapsedMs});}catch(err){const code=geminiErrorCode(err);geminiDebug('ERROR de fetch',{code,detail:err?.geminiDetail||''});throw err;}
+  const parts=(Array.isArray(input)?input:[]).map(item=>{
+    if(item?.type==='image')return{inline_data:{mime_type:item.mime_type,data:item.data}};
+    if(item?.type==='text')return{text:item.text};
+    return null;
+  }).filter(Boolean);
+  const body={contents:[{role:'user',parts}],generationConfig:{responseMimeType:'application/json',responseSchema}};
+  geminiDebug('5. Endpoint preparado',{endpoint:'Gemini generateContent',model:GEMINI_MODEL});
+  geminiDebug('5. Request preparado',{multimodal:parts.some(p=>!!p.inline_data),structuredOutput:true});
+  let result;try{geminiDebug('5. Iniciando fetch');result=await geminiFetchJson(GEMINI_GENERATE_URL,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,Accept:'application/json'},body:JSON.stringify(body)},'fetch',GEMINI_FETCH_TIMEOUT_MS);geminiDebug('6. Fetch completado',{elapsedMs:result.elapsedMs});}catch(err){const code=geminiErrorCode(err);geminiDebug('ERROR de fetch',{code,detail:err?.geminiDetail||''});throw err;}
   const {response}=result;const contentType=response.headers?.get?.('content-type')||'';geminiDebug('6. HTTP status',{status:response.status,contentType});
   let rawText='';try{let timerId;const timer=new Promise((_,reject)=>{timerId=setTimeout(()=>reject(geminiError('timeout-body')),GEMINI_BODY_TIMEOUT_MS);});try{rawText=await Promise.race([response.text(),timer]);}finally{clearTimeout(timerId);}}catch(err){geminiDebug('ERROR leyendo respuesta',{code:geminiErrorCode(err),message:err?.geminiDetail||err?.message||'response-read-failed'});throw err?.geminiCode?err:geminiError('invalid-response');}
   geminiDebug('7. Respuesta recibida',{status:response.status,bodyPresent:!!rawText,bodyLength:rawText.length});
   let payload=null;try{payload=rawText?JSON.parse(rawText):null;}catch{if(response.ok)throw geminiError('invalid-json');}
   if(!response.ok){const msg=typeof payload?.error?.message==='string'?payload.error.message:'HTTP '+response.status;geminiDebug('ERROR HTTP',{status:response.status,message:msg});if(response.status===400)throw geminiError('bad-request',msg);if(response.status===401||response.status===403)throw geminiError('invalid-key',msg);if(response.status===404)throw geminiError('model-unavailable',msg);if(response.status===429)throw geminiError('quota',msg);if(response.status>=500)throw geminiError('service',msg);throw geminiError('api',msg);}
-  // Interactions can complete synchronously, but the API also exposes an in_progress state.
-  // Poll that interaction without blocking the UI indefinitely.
-  if(payload?.status==='in_progress' && payload?.id){
-    const pollStarted=performance.now();let poll=payload,attempt=0;
-    geminiDebug('7.1 Interacción en progreso; iniciando sondeo',{hasInteractionId:true});
-    while(poll?.status==='in_progress'){
-      if(performance.now()-pollStarted>GEMINI_FETCH_TIMEOUT_MS)throw geminiError('timeout-poll');
-      await new Promise(r=>setTimeout(r,2000));
-      attempt++;
-      let pollResult;
-      try{pollResult=await geminiFetchJson(GEMINI_INTERACTIONS_URL+'/'+encodeURIComponent(payload.id),{method:'GET',headers:{'x-goog-api-key':apiKey,Accept:'application/json'}},'poll',8000);}catch(err){geminiDebug('ERROR sondeando interacción',{code:geminiErrorCode(err),attempt});throw err;}
-      const pollType=pollResult.response.headers?.get?.('content-type')||'';
-      let pollRaw='';try{pollRaw=await pollResult.response.text();}catch{throw geminiError('invalid-response','poll-response-read');}
-      try{poll=pollRaw?JSON.parse(pollRaw):null;}catch{throw geminiError('invalid-json','poll-json');}
-      geminiDebug('7.2 Estado de interacción',{status:poll?.status||'unknown',attempt,contentType:pollType});
-      if(!poll?.status)throw geminiError('invalid-response','missing-status');
-      if(['failed','cancelled'].includes(poll.status)){const detail=Array.isArray(poll.errors)?poll.errors.map(x=>x?.message).filter(Boolean).join(' | '):'';geminiDebug('ERROR interacción terminada',{status:poll.status,message:detail});throw geminiError('invalid-response',detail||poll.status);}
-      if(poll.status==='incomplete')throw geminiError('invalid-response','incomplete');
-    }
-    payload=poll;
-    geminiDebug('7.3 Sondeo terminado',{status:payload?.status||'unknown',elapsedMs:Math.round(performance.now()-pollStarted)});
-  }
-  const responseText=extractGeminiInteractionText(payload);geminiDebug('8. Resultado estructurado recibido',{structuredText:!!responseText,stepCount:Array.isArray(payload?.steps)?payload.steps.length:0});if(!responseText)throw geminiError('invalid-response');
+  if(payload?.promptFeedback?.blockReason){geminiDebug('ERROR contenido bloqueado',{blockReason:payload.promptFeedback.blockReason});throw geminiError('invalid-response',payload.promptFeedback.blockReason);}
+  const responseText=extractGeminiResponseText(payload);geminiDebug('8. Resultado estructurado recibido',{structuredText:!!responseText});if(!responseText)throw geminiError('invalid-response');
   let parsed;try{parsed=JSON.parse(responseText);}catch{throw geminiError('invalid-json');}
   return parsed;
 }
@@ -2946,7 +2928,7 @@ async function analizarComidaConGemini(imagen,descripcion=''){
   geminiDebug('9. JSON validando',{jsonValid:true});const nutrition=validateGeminiNutrition(parsed);if(!nutrition)throw geminiError('invalid-data');geminiDebug('9. JSON validado',{calorias:'recibido',proteinas_g:'recibido',carbohidratos_g:'recibido',grasas_g:'recibido'});return nutrition;
 }
 async function geminiDiagnosticModel(){const apiKey=getGeminiApiKey();geminiDebug('TEST 1. Comprobando API Key y modelo');if(!apiKey)throw geminiError('missing-key');await verifyGeminiModel(apiKey);return{ok:true,model:GEMINI_MODEL};}
-async function geminiDiagnosticText(){const apiKey=getGeminiApiKey();if(!apiKey)throw geminiError('missing-key');if(location.protocol==='file:')throw geminiError('file-origin');await verifyGeminiModel(apiKey);geminiDebug('TEST 1. Enviando solicitud mínima de texto',{model:GEMINI_MODEL});const parsed=await geminiInteraction([{type:'text',text:'Responde únicamente con "OK".'}],{type:'object',properties:{respuesta:{type:'string'}},required:['respuesta'],additionalProperties:false});geminiDebug('TEST 1. Resultado',{ok:!!parsed?.respuesta});return true;}
+async function geminiDiagnosticText(){const apiKey=getGeminiApiKey();if(!apiKey)throw geminiError('missing-key');if(location.protocol==='file:')throw geminiError('file-origin');await verifyGeminiModel(apiKey);geminiDebug('TEST 1. Enviando solicitud mínima de texto',{model:GEMINI_MODEL});const parsed=await geminiInteraction([{type:'text',text:'Responde únicamente con "OK".'}],{type:'object',properties:{respuesta:{type:'string'}},required:['respuesta']});geminiDebug('TEST 1. Resultado',{ok:!!parsed?.respuesta});return true;}
 window.centroGeminiDiagnostics={testModel:geminiDiagnosticModel,testText:geminiDiagnosticText,model:GEMINI_MODEL};
 function geminiUserError(err){
   switch(geminiErrorCode(err)){
