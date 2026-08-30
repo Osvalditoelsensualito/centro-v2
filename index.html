@@ -2798,7 +2798,7 @@ const GEMINI_API_KEY_STORAGE='user_gemini_api_key';
 // Current stable multimodal model: Gemini 3.7 Flash supports image input and structured JSON output.
 const GEMINI_MODEL='gemini-3.7-flash';
 const GEMINI_MODEL_URL='https://generativelanguage.googleapis.com/v1beta/models/'+GEMINI_MODEL;
-const GEMINI_INTERACTIONS_URL='https://generativelanguage.googleapis.com/v1beta/interactions';
+const GEMINI_INTERACTIONS_URL='https://generativelanguage.googleapis.com/v1/interactions';
 const GEMINI_IMAGE_MAX_BYTES=12*1024*1024;
 const GEMINI_IMAGE_MAX_EDGE=1280;
 const GEMINI_FETCH_TIMEOUT_MS=60000;
@@ -2822,7 +2822,7 @@ const MOVIE_AI_SCHEMA={
   properties:{
     titulo:{type:'string'},
     tipo:{type:'string',enum:MOVIE_AI_ALLOWED_TYPES},
-    categorias:{type:'array',items:{type:'string',enum:MOVIE_AI_ALLOWED_CATEGORIES}},
+    categorias:{type:'array',items:{type:'string',enum:MOVIE_AI_ALLOWED_CATEGORIES},minItems:1},
     sinopsis:{type:'string'},
     anio:{type:'integer'}
   },
@@ -2934,7 +2934,7 @@ async function geminiInteraction(input,responseSchema,logLabel='Gemini'){
   const body={model:GEMINI_MODEL,input,response_format:{type:'text',mime_type:'application/json',schema:responseSchema}};
   geminiDebug('5. Endpoint preparado',{endpoint:'Gemini Interactions API',model:GEMINI_MODEL});
   geminiDebug('5. Request preparado',{multimodal:Array.isArray(input)&&input.some(x=>x?.type==='image'),structuredOutput:true});
-  let result;try{geminiDebug('5. Iniciando fetch');result=await geminiFetchJson(GEMINI_INTERACTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,Accept:'application/json','Api-Revision':'2026-05-20'},body:JSON.stringify(body)},'fetch',GEMINI_FETCH_TIMEOUT_MS);geminiDebug('6. Fetch completado',{elapsedMs:result.elapsedMs});}catch(err){const code=geminiErrorCode(err);geminiDebug('ERROR de fetch',{code,detail:err?.geminiDetail||''});throw err;}
+  let result;try{geminiDebug('5. Iniciando fetch');result=await geminiFetchJson(GEMINI_INTERACTIONS_URL,{method:'POST',headers:{'Content-Type':'application/json','x-goog-api-key':apiKey,Accept:'application/json'},body:JSON.stringify(body)},'fetch',GEMINI_FETCH_TIMEOUT_MS);geminiDebug('6. Fetch completado',{elapsedMs:result.elapsedMs});}catch(err){const code=geminiErrorCode(err);geminiDebug('ERROR de fetch',{code,detail:err?.geminiDetail||''});throw err;}
   const {response}=result;const contentType=response.headers?.get?.('content-type')||'';geminiDebug('6. HTTP status',{status:response.status,contentType});
   let rawText='';try{let timerId;const timer=new Promise((_,reject)=>{timerId=setTimeout(()=>reject(geminiError('timeout-body')),GEMINI_BODY_TIMEOUT_MS);});try{rawText=await Promise.race([response.text(),timer]);}finally{clearTimeout(timerId);}}catch(err){geminiDebug('ERROR leyendo respuesta',{code:geminiErrorCode(err),message:err?.geminiDetail||err?.message||'response-read-failed'});throw err?.geminiCode?err:geminiError('invalid-response');}
   geminiDebug('7. Respuesta recibida',{status:response.status,bodyPresent:!!rawText,bodyLength:rawText.length});
@@ -2950,7 +2950,7 @@ async function geminiInteraction(input,responseSchema,logLabel='Gemini'){
       await new Promise(r=>setTimeout(r,2000));
       attempt++;
       let pollResult;
-      try{pollResult=await geminiFetchJson(GEMINI_INTERACTIONS_URL+'/'+encodeURIComponent(payload.id),{method:'GET',headers:{'x-goog-api-key':apiKey,Accept:'application/json','Api-Revision':'2026-05-20'}},'poll',8000);}catch(err){geminiDebug('ERROR sondeando interacción',{code:geminiErrorCode(err),attempt});throw err;}
+      try{pollResult=await geminiFetchJson(GEMINI_INTERACTIONS_URL+'/'+encodeURIComponent(payload.id),{method:'GET',headers:{'x-goog-api-key':apiKey,Accept:'application/json'}},'poll',8000);}catch(err){geminiDebug('ERROR sondeando interacción',{code:geminiErrorCode(err),attempt});throw err;}
       const pollType=pollResult.response.headers?.get?.('content-type')||'';
       let pollRaw='';try{pollRaw=await pollResult.response.text();}catch{throw geminiError('invalid-response','poll-response-read');}
       try{poll=pollRaw?JSON.parse(pollRaw):null;}catch{throw geminiError('invalid-json','poll-json');}
@@ -3279,40 +3279,16 @@ async function searchTmdbForMovieAi(ai){
 function movieCandidateTitle(c){return c?.title||c?.name||c?.original_title||c?.original_name||'Sin título';}
 function movieCandidateYear(c){return String(c?.release_date||c?.first_air_date||'').slice(0,4)||'—';}
 function applyMovieAiToForm(w,ai,candidate,posterUrl){
-  const officialTitle=candidate?movieCandidateTitle(candidate):ai.titulo;
-  w.querySelector('[name=name]').value=officialTitle;
-  w.querySelectorAll('[data-movie-type]').forEach(b=>b.classList.toggle('active',b.dataset.movieType===ai.tipo));
-  const aiCats=Array.isArray(ai.categorias)?ai.categorias:[];
-  const tmdbGenreNames=Array.isArray(candidate?.genres)?candidate.genres.map(g=>g?.name).filter(Boolean):[];
-  const cats=[...new Set([...tmdbGenreNames,...aiCats].filter(c=>L.MOVIE_CATEGORIES.includes(c)))];
-  const cat=cats[0]||L.MOVIE_CATEGORIES[0];
-  const select=w.querySelector('[name=category]');if(select)select.value=cat;
-  const yearInput=w.querySelector('[name=year]');if(yearInput){const officialYear=Number(movieCandidateYear(candidate))||0;yearInput.value=officialYear|| (ai.anio>0?ai.anio:'');}
-  const desc=w.querySelector('[name=description]');if(desc)desc.value=String(candidate?.overview||ai.sinopsis||'').trim();
-  const rating=Math.max(0,Math.min(10,Number(candidate?.vote_average)||0));
-  const ratingInput=w.querySelector('[name=rating]');if(ratingInput)ratingInput.value=String(rating);
-  w.querySelectorAll('[data-star]').forEach(x=>x.classList.toggle('filled',Number(x.dataset.star)<=rating));
+  w.querySelector('[name=name]').value=ai.titulo;w.querySelectorAll('[data-movie-type]').forEach(b=>b.classList.toggle('active',b.dataset.movieType===ai.tipo));
+  const cats=Array.isArray(ai.categorias)?ai.categorias:[];const cat=cats.find(c=>L.MOVIE_CATEGORIES.includes(c))||L.MOVIE_CATEGORIES[0];const select=w.querySelector('[name=category]');if(select)select.value=cat;
+  const yearInput=w.querySelector('[name=year]');if(yearInput)yearInput.value=ai.anio>0?ai.anio:(Number(movieCandidateYear(candidate))||'');
+  const desc=w.querySelector('[name=description]');if(desc)desc.value=ai.sinopsis||'';
+  w.querySelector('[name=rating]').value='0';w.querySelectorAll('[data-star]').forEach(x=>x.classList.remove('filled'));
   w.querySelectorAll('[data-movie-watched]').forEach(b=>b.classList.toggle('active',b.dataset.movieWatched==='no'));
   if(posterUrl){w.dataset.aiCover=posterUrl;const prev=w.querySelector('[data-movie-cover-preview]');if(prev){prev.src=posterUrl;prev.style.display='';}}
-  w._aiMovieCategories=cats.length?cats:aiCats;w._aiMovieTmdbCandidate=candidate||null;
+  w._aiMovieCategories=cats;w._aiMovieTmdbCandidate=candidate||null;
 }
-async function chooseMovieAiCandidate(w,ai,candidate){
-  const config=await getTmdbImageBase();
-  let details=candidate||{};
-  const id=Number(candidate?.id)||0;
-  if(id){
-    try{
-      const detailPath=ai.tipo==='serie'?`/tv/${id}`:`/movie/${id}`;
-      details=await tmdbFetchJson(detailPath,{language:'es-ES'},'details');
-    }catch(err){
-      tmdbDebug('Detalle TMDB no disponible; usando resultado de búsqueda',{status:err?.tmdbStatus||0});
-      details=candidate||{};
-    }
-  }
-  const poster=tmdbPosterUrl(details?.poster_path||candidate?.poster_path,config);
-  applyMovieAiToForm(w,ai,{...candidate,...details},poster);
-  if(poster)toast('Contenido identificado y portada encontrada en TMDB.');else toast('Se encontró el contenido, pero no hay una portada disponible.');
-}
+async function chooseMovieAiCandidate(w,ai,candidate){const config=await getTmdbImageBase();const poster=tmdbPosterUrl(candidate?.poster_path,config);applyMovieAiToForm(w,ai,candidate,poster);if(poster)toast('Contenido identificado y portada encontrada en TMDB.');else toast('Se encontró el contenido, pero no hay una portada disponible.');}
 async function movieAiCandidatePicker(w,ai,search){const imageConfig=await getTmdbImageBase();return new Promise(resolve=>{const body=`<p class="muted">Hay varias coincidencias. Elige la que corresponde al contenido.</p><div class="movie-ai-candidates">${search.candidates.map((c,i)=>`<button type="button" class="movie-ai-candidate" data-candidate="${i}">${c.poster_path?`<img src="${esc(tmdbPosterUrl(c.poster_path,imageConfig) )}" alt="">`:`<div class="movie-ai-candidate" style="justify-content:center;width:42px;height:62px">🎬</div>`}<span class="movie-ai-candidate-info"><strong>${esc(movieCandidateTitle(c))}</strong><small>${esc(movieCandidateYear(c))}</small><span class="movie-ai-candidate-meta">${esc(c.overview||'Sinopsis no disponible')}</span></span></button>`).join('')}</div>`;const picker=modal('Seleccionar coincidencia TMDB',body,async wrap=>{return false;},'Usar selección');picker.querySelector('#modalSave').style.display='none';picker.querySelectorAll('[data-close]').forEach(b=>b.onclick=()=>{picker.remove();resolve(false);});picker.querySelectorAll('[data-candidate]').forEach(b=>b.onclick=async()=>{const candidate=search.candidates[Number(b.dataset.candidate)];picker.remove();try{await chooseMovieAiCandidate(w,ai,candidate);resolve(true);}catch(err){toast(tmdbUserError(err));resolve(false);}});});}
 async function tmdbDiagnosticAuth(){if(location.protocol==='file:')throw new Error('tmdb-file-origin');if(!hasTmdbCredential())throw new Error('tmdb-missing-credential');tmdbDebug('TEST 1. Comprobando credencial TMDB');const data=await tmdbFetchJson('/authentication',{},'authentication');tmdbDebug('TEST 1. Credencial TMDB válida',{ok:true});return data;}
 window.centroMoviesDiagnostics={testTmdbAuth:tmdbDiagnosticAuth};
